@@ -1,4 +1,5 @@
 const uniqBy = require("lodash.uniqby");
+const isString = require("lodash.isstring");
 const PORT = process.env.PORT || 8000;
 const express = require("express");
 const axios = require("axios");
@@ -129,44 +130,53 @@ const articles = [];
 //   return !!pattern.test(str);
 // }
 
-const allArticles = [];
+// const searchTerm = "covid";
 
-newspapers.forEach((newspaper) => {
-  axios
-    .get(newspaper.address)
-    .then((response) => {
-      const html = response.data;
-      const $ = cheerio.load(html);
+const searchArticles = async (searchTerm) => {
+  let searchTermRegex;
 
-      $("a", html).each(function () {
-        const title = $(this).text();
-        const url = $(this).attr("href") || "";
+  if (isString(searchTerm)) {
+    searchTermRegex = new RegExp(`(?=.*${searchTerm})`);
+  }
 
-        // if (url.includes("covid") && url.includes("germany")) {
-        if (url.includes("africa")) {
-          allArticles.push({
-            title,
-            url: newspaper.base + url,
-            soure: newspaper.name,
-          });
-        }
+  if (Array.isArray(searchTerm)) {
+    searchTermRegex = new RegExp(
+      searchTerm.map((term) => `(?=.*${term})`).join("")
+    );
+  }
 
-        // allArticles.push({
-        //   title,
-        //   url: url,
-        //   soure: newspaper.name,
-        // });
+  // console.log(searchTermRegex);
+  try {
+    const articles = await Promise.all(
+      newspapers.map(async (newspaper) => {
+        const response = await axios.get(newspaper.address);
 
-        if (
-          url.includes(newspaper.address) &&
-          (url.match(/\/(\w+)/gi) || []).length < 4 &&
-          url.match("^[a-zA-Z0-9äöüÄÖÜ///ig.:-]*$")
-        ) {
-          console.log(url);
-          // console.log((url.match(/\/(\w+)/gi) || []).length);
-          axios
-            .get(url)
-            .then((resp) => {
+        const html = response.data;
+        const $ = cheerio.load(html);
+
+        const returnArr = [];
+
+        $("a", html).each(async function () {
+          const title = $(this).text();
+          const url = $(this).attr("href") || "";
+
+          if (searchTermRegex.test(url)) {
+            returnArr.push({
+              title,
+              url: newspaper.base + url,
+              soure: newspaper.name,
+            });
+          }
+
+          if (
+            url.includes(newspaper.address) &&
+            // (url.match(/\/(\w+)/gi) || []).length < 100 &&
+            url.match("^[a-zA-Z0-9äöüÄÖÜ///ig.:-]*$")
+          ) {
+            console.log(url);
+            try {
+              const resp = await axios.get(url);
+
               const resp_html = resp.data;
               const resp_$ = cheerio.load(resp_html);
 
@@ -174,32 +184,41 @@ newspapers.forEach((newspaper) => {
                 const resp_title = $(this).text();
                 const resp_url = $(this).attr("href") || "";
 
-                if (
-                  resp_url.includes("africa")
-                  //  &&
-                  // resp_url.includes("germany")
-                ) {
-                  allArticles.push({
+                if (searchTermRegex.test(resp_url)) {
+                  returnArr.push({
                     resp_title,
                     url: newspaper.base + resp_url,
                     soure: newspaper.name,
                   });
                 }
               });
-            })
-            .catch((err) => {
+            } catch (err) {
               console.log(err.message);
-            });
-        }
-      });
-    })
-    .catch((err) => console.log(err.message));
-});
+            }
+          }
+        });
+        console.log(newspaper.name + " " + searchTerm + " ...done");
+        return returnArr;
+      })
+    );
+    return articles;
+  } catch (error) {
+    // const { response } = error;
+    // const { req, ...errorObject } = response; // take everything but 'request'
+    console.log(error);
+  }
+};
 
-app.get("/test", (req, res) => {
-  res.json(uniqBy(allArticles, "url"));
+app.get("/test", async (req, res) => {
+  const { search } = req.query;
+  // console.log(search);
+
+  const returnArray = await searchArticles(search);
+  // console.log("returnArray");
+  // console.log(returnArray);
+  // res.json(uniqBy(returnArray, "url"));
   // console.log(allArticles);
-  res.json(allArticles);
+  res.json(returnArray);
 });
 
 app.listen(PORT, () => console.log(`server running on PORT ${PORT}`));
